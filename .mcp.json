@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bcra": {
+      "command": "npm",
+      "args": ["run", "mcp"],
+      "type": "stdio"
+    }
+  }
+}
