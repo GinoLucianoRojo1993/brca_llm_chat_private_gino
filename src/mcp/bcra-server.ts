@@ -25,6 +25,15 @@ const VariableSerieSchema = z.object({
   hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato YYYY-MM-DD"),
 });
 
+const VariablesFiltrarSchema = z.object({
+  idVariable: z.number().int().positive().optional(),
+  categoria: z.string().max(255).optional(),
+  periodicidad: z.string().max(1).optional(),
+  moneda: z.string().max(5).optional(),
+  tipoSerie: z.string().max(100).optional(),
+  unidadExpresion: z.string().max(100).optional(),
+});
+
 const MetodologiaSchema = z.object({
   id: z.number().int().positive(),
 });
@@ -94,6 +103,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "bcra_variables_listar",
       description: "Lista todas las principales variables monetarias del BCRA con sus últimos valores.",
       inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "bcra_variables_filtrar",
+      description: "Filtra variables monetarias del BCRA por categoría, periodicidad, moneda, tipo de serie o unidad de expresión.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          idVariable: { type: "number", description: "ID específico de variable" },
+          categoria: { type: "string", description: "Categoría (ej: 'Principales Variables')" },
+          periodicidad: { type: "string", description: "D=diaria, M=mensual" },
+          moneda: { type: "string", description: "ML=moneda local, ME=moneda extranjera, MEyML=ambas" },
+          tipoSerie: { type: "string", description: "Ej: 'Tasa de interés', 'Saldos', 'Variación'" },
+          unidadExpresion: { type: "string", description: "Ej: 'En porcentaje nominal anual'" },
+        },
+        required: [],
+      },
+    },
+    {
+      name: "bcra_metodologias_listar",
+      description: "Lista todas las metodologías de variables estadísticas del BCRA con sus descripciones detalladas.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Límite de resultados (default: 250)" },
+          offset: { type: "number", description: "Offset para paginación (default: 0)" },
+        },
+        required: [],
+      },
     },
     {
       name: "bcra_variable_serie",
@@ -224,6 +261,18 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     switch (name) {
       case "bcra_variables_listar": {
         const data = await bcra.listarVariables();
+        return ok(data);
+      }
+
+      case "bcra_variables_filtrar": {
+        const filtros = VariablesFiltrarSchema.parse(args);
+        const data = await bcra.listarVariables(1000, 0, filtros);
+        return ok(data);
+      }
+
+      case "bcra_metodologias_listar": {
+        const raw = args as { limit?: number; offset?: number } | undefined;
+        const data = await bcra.listarMetodologias(raw?.limit ?? 250, raw?.offset ?? 0);
         return ok(data);
       }
 

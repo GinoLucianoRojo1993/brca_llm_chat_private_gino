@@ -10,7 +10,9 @@
 
 export type Intent =
   | { type: "variables_listar" }
+  | { type: "variables_filtrar"; filtros: import("./bcra-client").VariablesFiltros }
   | { type: "variable_serie"; id: number; desde: string; hasta: string }
+  | { type: "metodologias_listar" }
   | { type: "metodologia"; id: number }
   | { type: "divisas_listar" }
   | { type: "cotizacion_fecha"; fecha: string; moneda?: string }
@@ -212,6 +214,11 @@ export function classify(text: string): RouterResult {
 
   // --- Variables monetarias ---
 
+  if (/metodolog[ií]as?\s*(todas?|listado|listar|disponibles?|completa)/.test(t) ||
+      (/metodolog[ií]as?/.test(t) && !/variable\s*\d|id\s*\d|\d/.test(t))) {
+    return { intent: { type: "metodologias_listar" }, missing: [] };
+  }
+
   if (/metodolog[ií]a|descripci[oó]n/.test(t) && nums.length >= 1) {
     return { intent: { type: "metodologia", id: nums[0] }, missing: [] };
   }
@@ -235,6 +242,17 @@ export function classify(text: string): RouterResult {
       intent: { type: "variable_serie", id: nums[0], desde: dates[0], hasta: dates[1] },
       missing: [],
     };
+  }
+
+  if (/variables?\s+(de\s+)?(tasas?|inter[eé]s|tipo|reservas?|precios?|dep[oó]sitos?|pr[eé]stamos?)|filtrar\s+variables?|variables?\s+filtradas?|variables?\s+por\s+(categor[ií]a|periodicidad|moneda|tipo)/.test(t)) {
+    const filtros: import("./bcra-client").VariablesFiltros = {};
+    if (/\bdiaria?\b/.test(t)) filtros.periodicidad = "D";
+    if (/\bmensual\b/.test(t)) filtros.periodicidad = "M";
+    if (/\bmoneda\s+extranjera\b|\bme\b/.test(t)) filtros.moneda = "ME";
+    if (/\bmoneda\s+local\b|\bml\b|\bpesos?\b/.test(t)) filtros.moneda = "ML";
+    if (/tasas?\s+de\s+inter[eé]s|inter[eé]s/.test(t)) filtros.tipoSerie = "Tasa de interés";
+    if (/reservas?/.test(t)) filtros.tipoSerie = "Saldos";
+    return { intent: { type: "variables_filtrar", filtros }, missing: [] };
   }
 
   if (/variables?|monetari[ao]|estad[ií]stica/.test(t)) {

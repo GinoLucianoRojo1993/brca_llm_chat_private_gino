@@ -11,7 +11,7 @@ import { useState, useRef, useEffect, FormEvent } from "react";
 // Easter egg #3: Klick 5 veces en el logo 🏦 para modo oscuro.
 //
 // Stack: Next.js 15 · TypeScript · Claude Sonnet 4.6 · BCRA APIs
-// OWASP Top 10 tested — v1.0.0 — Mar 2026
+// OWASP Top 10 secured (A01–A10) — v1.1.0 — Apr 2026
 // ============================================================
 
 interface Message {
@@ -136,10 +136,33 @@ export default function ChatPage() {
           <h1 style={styles.title}>BCRA Chat</h1>
           <p style={styles.subtitle}>Consultá las APIs del BCRA en lenguaje natural</p>
         </div>
-        {/* Badge OWASP */}
-        <div style={styles.owaspBadge} title="Testeado contra OWASP Top 10">
-          <span style={styles.owaspIcon}>🛡️</span>
-          <span style={styles.owaspText}>OWASP<br/>Tested</span>
+        {/* Insignia OWASP Top 10 */}
+        <div style={styles.owaspBadge} title="Secured against OWASP Top 10 — A01–A10 mitigated">
+          <svg
+            width="22"
+            height="26"
+            viewBox="0 0 22 26"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <path
+              d="M11 0L0 4.5V13C0 19.075 4.7 24.74 11 26C17.3 24.74 22 19.075 22 13V4.5L11 0Z"
+              fill="#4ade80"
+            />
+            <path
+              d="M11 2.4L2 6.3V13C2 18.1 6.1 22.9 11 24.1C15.9 22.9 20 18.1 20 13V6.3L11 2.4Z"
+              fill="#16a34a"
+            />
+            <path
+              d="M9.5 16.5L5.5 12.5L6.9 11.1L9.5 13.7L15.1 8.1L16.5 9.5L9.5 16.5Z"
+              fill="white"
+            />
+          </svg>
+          <div>
+            <div style={styles.owaspLabel}>OWASP</div>
+            <div style={styles.owaspText}>Top 10 ✓</div>
+          </div>
         </div>
       </header>
 
@@ -348,21 +371,26 @@ const styles: Record<string, React.CSSProperties> = {
   owaspBadge: {
     display: "flex",
     alignItems: "center",
-    gap: 4,
-    background: "rgba(255,255,255,0.12)",
-    border: "1px solid rgba(255,255,255,0.25)",
-    borderRadius: 6,
-    padding: "4px 8px",
+    gap: 6,
+    background: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(74,222,128,0.5)",
+    borderRadius: 8,
+    padding: "5px 10px",
     cursor: "default",
+    flexShrink: 0,
   },
-  owaspIcon: {
-    fontSize: 16,
+  owaspLabel: {
+    fontSize: 10,
+    fontWeight: 800,
+    color: "#4ade80",
+    letterSpacing: "0.08em",
+    lineHeight: 1.2,
   },
   owaspText: {
     fontSize: 10,
-    fontWeight: 700,
+    fontWeight: 600,
     color: "#fff",
     lineHeight: 1.2,
-    opacity: 0.9,
+    opacity: 0.85,
   },
 };

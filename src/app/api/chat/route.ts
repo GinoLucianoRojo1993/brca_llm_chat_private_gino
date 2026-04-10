@@ -44,6 +44,8 @@ export async function POST(req: NextRequest) {
   const origin = req.headers.get("origin");
   const host = req.headers.get("host");
   if (!isValidOrigin(origin, host)) {
+    // A09 – Log CORS violations for abuse monitoring
+    console.warn(`[security] CORS violation — origin=${origin} host=${host} ts=${new Date().toISOString()}`);
     return NextResponse.json({ error: "Origen no permitido" }, { status: 403 });
   }
 
@@ -53,6 +55,8 @@ export async function POST(req: NextRequest) {
     req.headers.get("x-real-ip") ??
     "unknown";
   if (isRateLimited(ip)) {
+    // A09 – Log rate limit violations for abuse monitoring
+    console.warn(`[security] Rate limit exceeded — ip=${ip.slice(0, 7)}*** ts=${new Date().toISOString()}`);
     return NextResponse.json(
       { error: "Demasiadas solicitudes. Esperá un momento e intentá de nuevo." },
       { status: 429 }
@@ -99,6 +103,21 @@ export async function POST(req: NextRequest) {
       case "variables_listar": {
         const data = await bcra.listarVariables();
         prompt = buildPrompt(question, "listar variables monetarias", data);
+        break;
+      }
+
+      case "variables_filtrar": {
+        const data = await bcra.listarVariables(1000, 0, intent.filtros);
+        const label = Object.entries(intent.filtros)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(", ");
+        prompt = buildPrompt(question, `variables filtradas (${label || "sin filtros"})`, data);
+        break;
+      }
+
+      case "metodologias_listar": {
+        const data = await bcra.listarMetodologias();
+        prompt = buildPrompt(question, "listado de metodologías BCRA", data);
         break;
       }
 
@@ -187,7 +206,7 @@ export async function POST(req: NextRequest) {
       case "deudor_historico": {
         const data = await bcra.obtenerDeudorHistorico(intent.identificacion);
         const masked = { ...data, identificacion: maskId(intent.identificacion) };
-        prompt = buildPrompt(question, "historial crediticio", masked);
+        prompt = buildPrompt(question, "historial crediticio (estructura v1.0)", masked);
         break;
       }
 

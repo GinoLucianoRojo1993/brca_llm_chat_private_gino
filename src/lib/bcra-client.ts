@@ -58,6 +58,22 @@ export interface Metodologia {
   unidad?: string;
 }
 
+/** Ítem del endpoint de listado de metodologías (GET /estadisticas/v4.0/Metodologia) */
+export interface MetodologiaListItem {
+  id: number;
+  detalle: string;
+}
+
+/** Parámetros de filtro opcionales para listarVariables() */
+export interface VariablesFiltros {
+  idVariable?: number;
+  categoria?: string;
+  periodicidad?: string;
+  moneda?: string;
+  tipoSerie?: string;
+  unidadExpresion?: string;
+}
+
 // --- Estadísticas Cambiarias v1.0 ---
 
 export interface Divisa {
@@ -106,18 +122,23 @@ export interface ChequeDenunciado {
 // --- Central de Deudores v1.0 ---
 
 export interface EntidadDeuda {
-  entidad: number;
-  situacion: number;
-  monto: number;
-  diasAtrasoPago: number;
+  entidad: string | null;
+  situacion: number | null;
+  /** Fecha en situación 1 (nueva en OpenAPI v1.0) */
+  fechaSit1: string | null;
+  monto: number | null;
+  diasAtrasoPago: number | null;
   refinanciaciones: boolean;
   recategorizacionOblig: boolean;
   situacionJuridica: boolean;
-  irrecuperables: boolean;
+  /** Antes llamado "irrecuperables" en versiones anteriores */
+  irrecDisposicionTecnica: boolean;
+  enRevision: boolean;
+  procesoJud: boolean;
 }
 
 export interface PeriodoDeuda {
-  periodo: string;
+  periodo: string | null;
   entidades: EntidadDeuda[];
 }
 
@@ -127,20 +148,59 @@ export interface Deudor {
   periodos: PeriodoDeuda[];
 }
 
-export interface ChequeRechazado {
+// Histórico tiene un subconjunto de campos (sin diasAtrasoPago, refinanciaciones, etc.)
+export interface HistorialEntidad {
+  entidad: string | null;
+  situacion: number | null;
+  monto: number | null;
+  enRevision: boolean;
+  procesoJud: boolean;
+}
+
+export interface HistorialPeriodo {
+  periodo: string | null;
+  entidades: HistorialEntidad[];
+}
+
+export interface DeudorHistorico {
+  identificacion: string;
+  denominacion: string;
+  periodos: HistorialPeriodo[];
+}
+
+/** Detalle de un cheque rechazado individual (estructura anidada bajo causales → entidades) */
+export interface ChequeRechazadoDetalle {
   nroCheque: number;
   fechaRechazo: string;
   monto: number;
   fechaPago: string | null;
-  estado: string;
-  codigoEntidad: number;
-  denominacionEntidad: string;
+  /** Fecha de pago de multa (nuevo campo) */
+  fechaPagoMulta: string | null;
+  /** Estado de la multa (nuevo campo, reemplaza "estado") */
+  estadoMulta: string | null;
+  /** Indica si es cuenta personal (nuevo campo) */
+  ctaPersonal: boolean;
+  /** Denominación jurídica (nuevo campo) */
+  denomJuridica: string | null;
+  enRevision: boolean;
+  procesoJud: boolean;
 }
 
+export interface ChequeEntidadRechazada {
+  entidad: number | null;
+  detalle: ChequeRechazadoDetalle[];
+}
+
+export interface ChequeCausal {
+  causal: string | null;
+  entidades: ChequeEntidadRechazada[];
+}
+
+/** Respuesta de cheques rechazados (estructura completamente rework en OpenAPI oficial) */
 export interface DeudorChequesRechazados {
   identificacion: string;
   denominacion: string;
-  chequesRechazados: ChequeRechazado[];
+  causales: ChequeCausal[];
 }
 
 // --- Transparencia v1.0 ---
@@ -231,8 +291,30 @@ async function get<T>(
 
 const VARS = "/estadisticas/v4.0";
 
-export function listarVariables(limit = 1000, offset = 0): Promise<Variable[]> {
-  return get<Variable[]>(`${VARS}/Monetarias`, {
+export function listarVariables(
+  limit = 1000,
+  offset = 0,
+  filtros?: VariablesFiltros
+): Promise<Variable[]> {
+  const params: Record<string, string> = {
+    Limit: String(limit),
+    Offset: String(offset),
+  };
+  if (filtros?.idVariable !== undefined) params.IdVariable = String(filtros.idVariable);
+  if (filtros?.categoria) params.Categoria = filtros.categoria;
+  if (filtros?.periodicidad) params.Periodicidad = filtros.periodicidad;
+  if (filtros?.moneda) params.Moneda = filtros.moneda;
+  if (filtros?.tipoSerie) params.TipoSerie = filtros.tipoSerie;
+  if (filtros?.unidadExpresion) params.UnidadExpresion = filtros.unidadExpresion;
+  return get<Variable[]>(`${VARS}/Monetarias`, params);
+}
+
+/**
+ * Lista todas las metodologías disponibles con sus descripciones.
+ * GET /estadisticas/v4.0/Metodologia
+ */
+export function listarMetodologias(limit = 250, offset = 0): Promise<MetodologiaListItem[]> {
+  return get<MetodologiaListItem[]>(`${VARS}/Metodologia`, {
     Limit: String(limit),
     Offset: String(offset),
   });
@@ -322,8 +404,8 @@ export function obtenerDeudorActual(identificacion: string): Promise<Deudor> {
   return get<Deudor>(`${CD}/Deudas/${identificacion}`);
 }
 
-export function obtenerDeudorHistorico(identificacion: string): Promise<Deudor> {
-  return get<Deudor>(`${CD}/Deudas/Historicas/${identificacion}`);
+export function obtenerDeudorHistorico(identificacion: string): Promise<DeudorHistorico> {
+  return get<DeudorHistorico>(`${CD}/Deudas/Historicas/${identificacion}`);
 }
 
 export function obtenerChequesRechazados(
