@@ -268,6 +268,7 @@ async function get<T>(
         let data = "";
         res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
         res.on("end", () => resolve(data));
+        res.on("error", reject);
       }
     );
     req.on("error", reject);

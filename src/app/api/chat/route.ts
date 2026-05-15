@@ -259,10 +259,17 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error desconocido";
     if (/no se encontr[oó]/i.test(msg) || /ECONNRESET|ECONNREFUSED|timeout/i.test(msg)) {
-      const reply = await callClaude(
-        `El usuario preguntó: "${question}"\n\nEl servicio no devolvió datos para esa consulta (puede que no existan registros o el servicio no esté disponible). Informale de forma clara y amable, sin inventar información.`
-      );
-      return NextResponse.json({ reply });
+      try {
+        const reply = await callClaude(
+          `El usuario preguntó: "${question}"\n\nEl servicio no devolvió datos para esa consulta (puede que no existan registros o el servicio no esté disponible). Informale de forma clara y amable, sin inventar información.`
+        );
+        return NextResponse.json({ reply });
+      } catch {
+        return NextResponse.json(
+          { reply: "El servicio del BCRA no devolvió datos y el asistente no está disponible en este momento. Intentá de nuevo más tarde." },
+          { status: 200 }
+        );
+      }
     }
     console.error("[chat/route]", msg);
     return NextResponse.json(

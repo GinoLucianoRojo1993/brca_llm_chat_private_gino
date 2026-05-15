@@ -41,7 +41,16 @@ const DATE_RE = /\b(\d{4}-\d{2}-\d{2})\b/g;
 const CUIT_DASHED_RE = /\b(\d{2}-\d{7,8}-\d{1})\b/;
 const CUIT_PLAIN_RE = /\b(\d{11})\b/;
 const CURRENCY_RE =
-  /\b(USD|EUR|BRL|UYU|PYG|GBP|CHF|JPY|CAD|AUD|CLF|MXN|CNY|HKD|COP|BOB|PEN|VES|ARS)\b/i;
+  /\b(USD|EUR|BRL|UYU|PYG|GBP|CHF|JPY|CAD|AUD|CLF|CLP|MXN|MXP|CNY|CNH|HKD|COP|BOB|PEN|VES|ARS)\b/i;
+
+/**
+ * Normaliza códigos de moneda al código que usa la API del BCRA.
+ * Algunas monedas tienen un código ISO estándar diferente al del BCRA.
+ * Ej: México → ISO usa MXN, BCRA usa MXP.
+ */
+const CURRENCY_NORMALIZE: Record<string, string> = {
+  MXN: "MXP",
+};
 
 function todayISO(): string {
   // BCRA usa hora argentina (UTC-3) — evita enviar fecha futura desde servidores en UTC
@@ -84,7 +93,9 @@ function extractCuit(text: string): string | null {
 
 function extractCurrency(text: string): string | null {
   const m = CURRENCY_RE.exec(text);
-  return m ? m[1].toUpperCase() : null;
+  if (!m) return null;
+  const code = m[1].toUpperCase();
+  return CURRENCY_NORMALIZE[code] ?? code;
 }
 
 function normalizeProducto(text: string): import("./bcra-client").TransparenciaProducto {

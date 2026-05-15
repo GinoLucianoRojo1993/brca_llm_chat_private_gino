@@ -296,6 +296,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     color: "#1a3a5c",
     textAlign: "left",
+    cursor: "pointer",
     transition: "background 0.15s",
   },
   bubble: {
