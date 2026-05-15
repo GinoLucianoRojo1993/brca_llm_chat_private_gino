@@ -275,7 +275,12 @@ async function get<T>(
     req.end();
   });
 
-  const envelope = JSON.parse(body) as BcraEnvelope<T>;
+  let envelope: BcraEnvelope<T>;
+  try {
+    envelope = JSON.parse(body) as BcraEnvelope<T>;
+  } catch {
+    throw new Error(`BCRA devolvió respuesta inválida (no JSON) para ${urlStr}`);
+  }
 
   // Algunos endpoints devuelven HTTP 4xx con JSON de error en el body
   if (envelope.errorMessages?.length) {
@@ -395,10 +400,11 @@ export function consultarChequeDenunciado(
 
 // ---------------------------------------------------------------------------
 // Central de Deudores v1.0
-// Path base: /centraldedeudores/v1.0  (prefijo fijo, confirmado por OpenAPI)
+// Path base configurable vía BCRA_CENTRAL_DEUDORES_PREFIX (default: centraldedeudores)
 // ---------------------------------------------------------------------------
 
-const CD = "/centraldedeudores/v1.0";
+const CD_PREFIX = process.env.BCRA_CENTRAL_DEUDORES_PREFIX ?? "centraldedeudores";
+const CD = `/${CD_PREFIX}/v1.0`;
 
 export function obtenerDeudorActual(identificacion: string): Promise<Deudor> {
   return get<Deudor>(`${CD}/Deudas/${identificacion}`);

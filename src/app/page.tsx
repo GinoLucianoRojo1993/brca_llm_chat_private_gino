@@ -71,7 +71,7 @@ export default function ChatPage() {
         {
           role: "assistant",
           content:
-            "👨‍💻 Este proyecto fue desarrollado por **Gino Luciano Rojo**.\n\n📌 LinkedIn: linkedin.com/in/gino-luciano-rojo/\n\n🛡️ Testeado contra OWASP Top 10\n⚡ Stack: Next.js 15 · TypeScript · Claude Sonnet 4.6 · APIs BCRA\n📅 Versión 1.0.0 — Marzo 2026",
+            "👨‍💻 Este proyecto fue desarrollado por **Gino Luciano Rojo**.\n\n📌 LinkedIn: linkedin.com/in/gino-luciano-rojo/\n\n🛡️ Testeado contra OWASP Top 10\n⚡ Stack: Next.js 15 · TypeScript · Claude Sonnet 4.6 · APIs BCRA\n📅 Versión 1.1.0 — Mayo 2026",
         },
       ]);
       setInput("");

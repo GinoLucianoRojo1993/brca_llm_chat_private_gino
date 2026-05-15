@@ -57,8 +57,10 @@ function extractDates(text: string): string[] {
   const t = text.toLowerCase();
   if (/\bhoy\b/.test(t)) return [todayISO()];
   if (/\bayer\b/.test(t)) {
-    const d = new Date(); d.setDate(d.getDate() - 1);
-    return [d.toISOString().slice(0, 10)];
+    const now = new Date();
+    const arg = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+    arg.setDate(arg.getDate() - 1);
+    return [arg.toISOString().slice(0, 10)];
   }
   return [];
 }

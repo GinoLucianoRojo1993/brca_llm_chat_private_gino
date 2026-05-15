@@ -42,5 +42,6 @@ export function compact(
 
 /** Convierte el resultado compactado a string JSON legible para el prompt. */
 export function compactJson(value: unknown, opts?: CompactOptions): string {
-  return JSON.stringify(compact(value, opts), null, 2);
+  const compacted = compact(value, opts);
+  return JSON.stringify(compacted ?? null, null, 2);
 }
