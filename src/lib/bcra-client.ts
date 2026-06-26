@@ -50,15 +50,11 @@ export interface SerieDatos {
   detalle: DetalleSerie[];
 }
 
-export interface Metodologia {
-  idVariable: number;
-  descripcion: string;
-  metodologia: string;
-  fuente?: string;
-  unidad?: string;
-}
-
-/** Ítem del endpoint de listado de metodologías (GET /estadisticas/v4.0/Metodologia) */
+/**
+ * Ítem de metodología — esquema único para ambos endpoints:
+ *   GET /estadisticas/v4.0/Metodologia          → array[]
+ *   GET /estadisticas/v4.0/Metodologia/{id}     → array[] (mismo schema, sin metadata)
+ */
 export interface MetodologiaListItem {
   id: number;
   detalle: string;
@@ -339,8 +335,8 @@ export function obtenerSerie(
   });
 }
 
-export function obtenerMetodologia(id: number): Promise<Metodologia> {
-  return get<Metodologia>(`${VARS}/Metodologia/${id}`);
+export function obtenerMetodologia(id: number): Promise<MetodologiaListItem[]> {
+  return get<MetodologiaListItem[]>(`${VARS}/Metodologia/${id}`);
 }
 
 // ---------------------------------------------------------------------------
