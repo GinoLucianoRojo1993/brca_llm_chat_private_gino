@@ -11,6 +11,7 @@
 export type Intent =
   | { type: "variables_listar" }
   | { type: "variables_filtrar"; filtros: import("./bcra-client").VariablesFiltros }
+  | { type: "variables_buscar"; texto: string }
   | { type: "variable_serie"; id: number; desde: string; hasta: string }
   | { type: "metodologias_listar" }
   | { type: "metodologia"; id: number }
@@ -52,6 +53,23 @@ const CURRENCY_NORMALIZE: Record<string, string> = {
   MXN: "MXP",
 };
 
+/**
+ * Nombres coloquiales en español → código de moneda BCRA.
+ * Permite reconocer "el dólar", "el euro", etc. además de códigos ISO.
+ */
+const CURRENCY_SYNONYMS: Array<[RegExp, string]> = [
+  [/\bd[oó]lar(es)?\b/i, "USD"],
+  [/\beuros?\b/i, "EUR"],
+  [/\breal(es)?\b/i, "BRL"],
+  [/\blibras?(\s+esterlinas?)?\b/i, "GBP"],
+  [/\bfrancos?\s+suizos?\b/i, "CHF"],
+  [/\byen(es)?\b/i, "JPY"],
+  [/\bguaran[ií](es)?\b/i, "PYG"],
+  [/\bpesos?\s+chilenos?\b/i, "CLP"],
+  [/\bpesos?\s+mexicanos?\b/i, "MXP"],
+  [/\bpesos?\s+uruguayos?\b/i, "UYU"],
+];
+
 function todayISO(): string {
   // BCRA usa hora argentina (UTC-3) — evita enviar fecha futura desde servidores en UTC
   const now = new Date();
@@ -91,11 +109,32 @@ function extractCuit(text: string): string | null {
   return null;
 }
 
+/**
+ * Devuelve la moneda mencionada más temprano en el texto (código ISO o
+ * nombre coloquial en español) — importante cuando se fusiona el mensaje
+ * actual con el anterior para resolver follow-ups: la mención más a la
+ * izquierda debe ser la del mensaje actual, no la más "prioritaria".
+ */
 function extractCurrency(text: string): string | null {
-  const m = CURRENCY_RE.exec(text);
-  if (!m) return null;
-  const code = m[1].toUpperCase();
-  return CURRENCY_NORMALIZE[code] ?? code;
+  let bestIndex = Infinity;
+  let bestCode: string | null = null;
+
+  const isoMatch = CURRENCY_RE.exec(text);
+  if (isoMatch && isoMatch.index < bestIndex) {
+    bestIndex = isoMatch.index;
+    const code = isoMatch[1].toUpperCase();
+    bestCode = CURRENCY_NORMALIZE[code] ?? code;
+  }
+
+  for (const [re, code] of CURRENCY_SYNONYMS) {
+    const m = re.exec(text);
+    if (m && m.index < bestIndex) {
+      bestIndex = m.index;
+      bestCode = code;
+    }
+  }
+
+  return bestCode;
 }
 
 function normalizeProducto(text: string): import("./bcra-client").TransparenciaProducto {
@@ -255,6 +294,17 @@ export function classify(text: string): RouterResult {
       intent: { type: "variable_serie", id: nums[0], desde: dates[0], hasta: dates[1] },
       missing: [],
     };
+  }
+
+  // Categorías nuevas de Estadísticas Monetarias v4.0 (Informe Monetario Diario,
+  // préstamos/depósitos por tipo de titular, sector público por jurisdicción).
+  // Se resuelven por búsqueda de texto libre sobre la descripción de las variables
+  // en vez de adivinar los valores exactos de `categoria`/`tipoSerie` del BCRA.
+  const BUSQUEDA_TEXTO_RE =
+    /\bm[123]\b|agregados?\s+monetarios?|\bpymes?\b|personas?\s+humanas?|sector\s+p[uú]blico|dep[oó]sitos?\s+por\s+titular|pr[eé]stamos?\s+por\s+titular|(pr[eé]stamos?|dep[oó]sitos?)[^.?!]*(provincial|municipal|jurisdicci[oó]n)/;
+  const busqueda = BUSQUEDA_TEXTO_RE.exec(t);
+  if (busqueda) {
+    return { intent: { type: "variables_buscar", texto: busqueda[0] }, missing: [] };
   }
 
   if (/variables?\s+(de\s+)?(tasas?|inter[eé]s|tipo|reservas?|precios?|dep[oó]sitos?|pr[eé]stamos?)|filtrar\s+variables?|variables?\s+filtradas?|variables?\s+por\s+(categor[ií]a|periodicidad|moneda|tipo)/.test(t)) {

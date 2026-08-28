@@ -6,7 +6,10 @@
  * https://datos.jus.gob.ar/dataset/ee83de85-4305-4c53-9a9f-fd3d15e42c36
  */
 
+import { getOrSet } from "./cache";
+
 const CKAN_BASE = "https://datos.jus.gob.ar/api/3/action";
+const TTL_RNS = 120_000;
 
 // Resource IDs
 const RNS_MUESTREO_ID = "6096331b-0511-4728-b01b-6c6b535f4c2b";
@@ -53,12 +56,14 @@ interface CkanResult {
 async function ckanGet(params: Record<string, string>): Promise<CkanResult> {
   const qs = new URLSearchParams(params).toString();
   const url = `${CKAN_BASE}/datastore_search?${qs}`;
-  const res = await fetch(url, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
+  return getOrSet(url, TTL_RNS, async () => {
+    const res = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`CKAN error ${res.status}`);
+    return res.json() as Promise<CkanResult>;
   });
-  if (!res.ok) throw new Error(`CKAN error ${res.status}`);
-  return res.json() as Promise<CkanResult>;
 }
 
 /**

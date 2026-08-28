@@ -1,4 +1,5 @@
 import https from "https";
+import { getOrSet } from "./cache";
 
 /**
  * Cliente HTTP tipado para las APIs públicas del BCRA.
@@ -287,6 +288,23 @@ async function get<T>(
 }
 
 // ---------------------------------------------------------------------------
+// Caché en memoria (TTL corto) — ver src/lib/cache.ts
+// ---------------------------------------------------------------------------
+
+/** Catálogos poco cambiantes (divisas, entidades, metodologías, variables). */
+const TTL_CATALOGO = 300_000;
+/** Cotizaciones y series, que pueden actualizarse a diario. */
+const TTL_SERIE = 60_000;
+
+function cachedGet<T>(
+  path: string,
+  params: Record<string, string> | undefined,
+  ttlMs: number
+): Promise<T> {
+  return getOrSet(buildUrl(path, params), ttlMs, () => get<T>(path, params));
+}
+
+// ---------------------------------------------------------------------------
 // Principales Variables v4.0
 // Path base: /estadisticas/v4.0
 // ---------------------------------------------------------------------------
@@ -308,7 +326,7 @@ export function listarVariables(
   if (filtros?.moneda) params.Moneda = filtros.moneda;
   if (filtros?.tipoSerie) params.TipoSerie = filtros.tipoSerie;
   if (filtros?.unidadExpresion) params.UnidadExpresion = filtros.unidadExpresion;
-  return get<Variable[]>(`${VARS}/Monetarias`, params);
+  return cachedGet<Variable[]>(`${VARS}/Monetarias`, params, TTL_CATALOGO);
 }
 
 /**
@@ -316,27 +334,74 @@ export function listarVariables(
  * GET /estadisticas/v4.0/Metodologia
  */
 export function listarMetodologias(limit = 250, offset = 0): Promise<MetodologiaListItem[]> {
-  return get<MetodologiaListItem[]>(`${VARS}/Metodologia`, {
-    Limit: String(limit),
-    Offset: String(offset),
-  });
+  return cachedGet<MetodologiaListItem[]>(
+    `${VARS}/Metodologia`,
+    { Limit: String(limit), Offset: String(offset) },
+    TTL_CATALOGO
+  );
+}
+
+/**
+ * Trae la serie completa de una variable, paginando con Offset mientras
+ * el BCRA siga devolviendo páginas llenas (evita truncar rangos largos).
+ * `cap` acota el total de puntos para no crecer sin límite.
+ */
+async function fetchSerieCompleta(
+  id: number,
+  desde: string,
+  hasta: string,
+  pageSize: number,
+  cap: number
+): Promise<SerieDatos[]> {
+  let base: SerieDatos | undefined;
+  let acc: DetalleSerie[] = [];
+  let offset = 0;
+  for (let i = 0; i < 20 && acc.length < cap; i++) {
+    const page = await get<SerieDatos[]>(`${VARS}/Monetarias/${id}`, {
+      Desde: desde,
+      Hasta: hasta,
+      Limit: String(pageSize),
+      Offset: String(offset),
+    });
+    const item = page[0];
+    if (!item || item.detalle.length === 0) break;
+    base = base ?? item;
+    acc = acc.concat(item.detalle);
+    if (item.detalle.length < pageSize) break;
+    offset += pageSize;
+  }
+  if (!base) return [];
+  return [{ ...base, detalle: acc.slice(0, cap) }];
 }
 
 export function obtenerSerie(
   id: number,
   desde: string,
   hasta: string,
-  limit = 1000
+  pageSize = 1000,
+  cap = 5000
 ): Promise<SerieDatos[]> {
-  return get<SerieDatos[]>(`${VARS}/Monetarias/${id}`, {
-    Desde: desde,
-    Hasta: hasta,
-    Limit: String(limit),
-  });
+  return getOrSet(
+    `serie:${id}:${desde}:${hasta}`,
+    TTL_SERIE,
+    () => fetchSerieCompleta(id, desde, hasta, pageSize, cap)
+  );
 }
 
 export function obtenerMetodologia(id: number): Promise<MetodologiaListItem[]> {
-  return get<MetodologiaListItem[]>(`${VARS}/Metodologia/${id}`);
+  return cachedGet<MetodologiaListItem[]>(`${VARS}/Metodologia/${id}`, undefined, TTL_CATALOGO);
+}
+
+/**
+ * Búsqueda por texto libre sobre la descripción de las variables.
+ * Cubre categorías nuevas de v4.0 (M1/M2/M3, préstamos/depósitos por tipo
+ * de titular, sector público por jurisdicción) sin necesidad de conocer
+ * los valores exactos de `categoria`/`tipoSerie` que usa el BCRA internamente.
+ */
+export async function buscarVariablesPorTexto(texto: string): Promise<Variable[]> {
+  const variables = await listarVariables();
+  const needle = texto.toLowerCase();
+  return variables.filter((v) => v.descripcion.toLowerCase().includes(needle));
 }
 
 // ---------------------------------------------------------------------------
@@ -347,7 +412,7 @@ export function obtenerMetodologia(id: number): Promise<MetodologiaListItem[]> {
 const FX = "/estadisticascambiarias/v1.0";
 
 export function listarDivisas(): Promise<Divisa[]> {
-  return get<Divisa[]>(`${FX}/Maestros/Divisas`);
+  return cachedGet<Divisa[]>(`${FX}/Maestros/Divisas`, undefined, TTL_CATALOGO);
 }
 
 /**
@@ -358,21 +423,53 @@ export function listarDivisas(): Promise<Divisa[]> {
 export function obtenerCotizacionesFecha(
   fecha?: string
 ): Promise<CotizacionesFecha> {
-  return get<CotizacionesFecha>(`${FX}/Cotizaciones`, fecha ? { fecha } : undefined);
+  return cachedGet<CotizacionesFecha>(
+    `${FX}/Cotizaciones`,
+    fecha ? { fecha } : undefined,
+    TTL_SERIE
+  );
 }
 
-/** Serie de cotizaciones de una moneda específica entre dos fechas. */
+/**
+ * Serie completa de cotizaciones de una moneda entre dos fechas, paginando
+ * con `offset` mientras el BCRA siga devolviendo páginas llenas.
+ */
+async function fetchCotizacionSerieCompleta(
+  codMoneda: string,
+  fechaDesde: string,
+  fechaHasta: string,
+  pageSize: number,
+  cap: number
+): Promise<CotizacionMonedaDia[]> {
+  const items: CotizacionMonedaDia[] = [];
+  let offset = 0;
+  for (let i = 0; i < 20 && items.length < cap; i++) {
+    const page = await get<CotizacionMonedaDia[]>(`${FX}/Cotizaciones/${codMoneda}`, {
+      fechaDesde,
+      fechaHasta,
+      limit: String(pageSize),
+      offset: String(offset),
+    });
+    if (page.length === 0) break;
+    items.push(...page);
+    if (page.length < pageSize) break;
+    offset += pageSize;
+  }
+  return items.slice(0, cap);
+}
+
 export function obtenerSerieCotizacionMoneda(
   codMoneda: string,
   fechaDesde: string,
   fechaHasta: string,
-  limit = 1000
+  pageSize = 1000,
+  cap = 5000
 ): Promise<CotizacionMonedaDia[]> {
-  return get<CotizacionMonedaDia[]>(`${FX}/Cotizaciones/${codMoneda}`, {
-    fechaDesde,
-    fechaHasta,
-    limit: String(limit),
-  });
+  return getOrSet(
+    `cotizacion-serie:${codMoneda}:${fechaDesde}:${fechaHasta}`,
+    TTL_SERIE,
+    () => fetchCotizacionSerieCompleta(codMoneda, fechaDesde, fechaHasta, pageSize, cap)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -383,15 +480,17 @@ export function obtenerSerieCotizacionMoneda(
 const CHQ = "/cheques/v1.0";
 
 export function listarEntidadesCheques(): Promise<EntidadCheques[]> {
-  return get<EntidadCheques[]>(`${CHQ}/entidades`);
+  return cachedGet<EntidadCheques[]>(`${CHQ}/entidades`, undefined, TTL_CATALOGO);
 }
 
 export function consultarChequeDenunciado(
   codigoEntidad: number,
   numeroCheque: number
 ): Promise<ChequeDenunciado> {
-  return get<ChequeDenunciado>(
-    `${CHQ}/denunciados/${codigoEntidad}/${numeroCheque}`
+  return cachedGet<ChequeDenunciado>(
+    `${CHQ}/denunciados/${codigoEntidad}/${numeroCheque}`,
+    undefined,
+    TTL_SERIE
   );
 }
 
@@ -431,7 +530,9 @@ export function consultarTransparencia(
   codigoEntidad: number,
   producto: TransparenciaProducto
 ): Promise<TransparenciaItem[]> {
-  return get<TransparenciaItem[]>(`${TR}/${producto}`, {
-    codigoEntidad: String(codigoEntidad),
-  });
+  return cachedGet<TransparenciaItem[]>(
+    `${TR}/${producto}`,
+    { codigoEntidad: String(codigoEntidad) },
+    TTL_CATALOGO
+  );
 }

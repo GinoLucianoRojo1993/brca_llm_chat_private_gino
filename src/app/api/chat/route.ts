@@ -1,11 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { classify } from "@/lib/router";
 import { compactJson } from "@/lib/compact";
-import { callClaude } from "@/lib/claude";
+import { callClaude, streamClaude } from "@/lib/claude";
 import { maskId } from "@/lib/bcra-client";
 import * as bcra from "@/lib/bcra-client";
 import * as rns from "@/lib/rns-client";
 import { sanitizeInput, isRateLimited, isValidOrigin } from "@/lib/security";
+
+/** Punto de gráfico compacto: [fecha, valor]. */
+type ChartPoint = [string, number];
+
+/** Muestrea `items` a lo sumo `maxPoints`, preservando el primero y el último. */
+function downsample<T>(items: T[], maxPoints = 200): T[] {
+  if (items.length <= maxPoints) return items;
+  const step = items.length / maxPoints;
+  const result: T[] = [];
+  for (let i = 0; i < maxPoints; i++) {
+    result.push(items[Math.floor(i * step)]);
+  }
+  return result;
+}
 
 export const runtime = "nodejs";
 
@@ -88,13 +102,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Mensaje vacío" }, { status: 400 });
   }
 
-  const { intent, missing } = classify(question);
+  let { intent, missing } = classify(question);
+
+  // Follow-up sin parámetros propios (ej. "¿y en euros?") — se resuelve fusionando
+  // con el mensaje de usuario anterior, sin mandar historial al LLM.
+  if (missing.length > 0 || intent.type === "desconocido") {
+    const priorUsers = messages.filter((m) => m.role === "user");
+    const prevUser = priorUsers[priorUsers.length - 2];
+    if (prevUser) {
+      const prevText = sanitizeInput(prevUser.content);
+      if (prevText) {
+        // El mensaje actual va primero: sus entidades (moneda, fecha) priman
+        // sobre las del mensaje anterior cuando ambos mencionan algo distinto.
+        const merged = classify(`${question} ${prevText}`);
+        if (merged.missing.length === 0 && merged.intent.type !== "desconocido") {
+          intent = merged.intent;
+          missing = merged.missing;
+        }
+      }
+    }
+  }
 
   // Si faltan parámetros, responder sin llamar al LLM
   if (missing.length > 0) {
     const reply = `Para responder esa consulta necesito que me indiques: ${missing.join(", ")}.`;
     return NextResponse.json({ reply });
   }
+
+  let chartPoints: ChartPoint[] | undefined;
 
   try {
     let prompt: string;
@@ -121,13 +156,24 @@ export async function POST(req: NextRequest) {
         break;
       }
 
+      case "variables_buscar": {
+        const data = await bcra.buscarVariablesPorTexto(intent.texto);
+        prompt = buildPrompt(
+          question,
+          `variables que coinciden con "${intent.texto}" (incluye categorías nuevas de Estadísticas Monetarias v4.0: agregados monetarios M1/M2/M3, préstamos y depósitos por tipo de titular, sector público por jurisdicción)`,
+          data
+        );
+        break;
+      }
+
       case "variable_serie": {
         const data = await bcra.obtenerSerie(intent.id, intent.desde, intent.hasta);
-        const detalle = data[0]?.detalle ?? data;
+        const detalle = data[0]?.detalle ?? [];
+        chartPoints = downsample(detalle.map((d): ChartPoint => [d.fecha, d.valor]));
         prompt = buildPrompt(
           question,
           `serie de variable ${intent.id} (${intent.desde} — ${intent.hasta})`,
-          detalle
+          detalle.length ? detalle : data
         );
         break;
       }
@@ -172,6 +218,14 @@ export async function POST(req: NextRequest) {
           intent.desde,
           intent.hasta
         );
+        const points: ChartPoint[] = [];
+        for (const dia of data) {
+          const det = dia.detalle.find(
+            (d) => d.codigoMoneda.toUpperCase() === intent.moneda.toUpperCase()
+          );
+          if (det) points.push([dia.fecha, det.tipoCotizacion]);
+        }
+        chartPoints = downsample(points);
         prompt = buildPrompt(
           question,
           `evolución ${intent.moneda} (${intent.desde} — ${intent.hasta})`,
@@ -254,8 +308,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const reply = await callClaude(prompt);
-    return NextResponse.json({ reply });
+    const stream = await streamClaude(prompt);
+    const headers: Record<string, string> = { "Content-Type": "text/plain; charset=utf-8" };
+    if (chartPoints && chartPoints.length > 0) {
+      headers["X-Bcra-Series"] = JSON.stringify(chartPoints);
+    }
+    return new Response(stream, { headers });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error desconocido";
     if (/no se encontr[oó]/i.test(msg) || /ECONNRESET|ECONNREFUSED|timeout/i.test(msg)) {

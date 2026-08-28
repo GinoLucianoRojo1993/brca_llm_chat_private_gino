@@ -17,6 +17,8 @@ import { useState, useRef, useEffect, FormEvent } from "react";
 interface Message {
   role: "user" | "assistant";
   content: string;
+  /** Puntos [fecha, valor] cuando la respuesta trae una serie temporal (X-Bcra-Series). */
+  chart?: [string, number][];
 }
 
 const SUGGESTIONS = [
@@ -105,9 +107,48 @@ export default function ChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: updated }),
       });
-      const data = (await res.json()) as { reply?: string; error?: string };
-      const reply = data.reply ?? data.error ?? "Sin respuesta.";
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+
+      const contentType = res.headers.get("Content-Type") ?? "";
+
+      // Respuestas cortas sin streaming: faltan parámetros, error de validación, fallback.
+      if (contentType.includes("application/json")) {
+        const data = (await res.json()) as { reply?: string; error?: string };
+        const reply = data.reply ?? data.error ?? "Sin respuesta.";
+        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+        return;
+      }
+
+      if (!res.body) {
+        setMessages((prev) => [...prev, { role: "assistant", content: "Sin respuesta." }]);
+        return;
+      }
+
+      const chartHeader = res.headers.get("X-Bcra-Series");
+      let chart: [string, number][] | undefined;
+      if (chartHeader) {
+        try {
+          chart = JSON.parse(chartHeader) as [string, number][];
+        } catch {
+          chart = undefined;
+        }
+      }
+
+      setMessages((prev) => [...prev, { role: "assistant", content: "", chart }]);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc += decoder.decode(value, { stream: true });
+        const snapshot = acc;
+        setMessages((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = { ...next[next.length - 1], content: snapshot };
+          return next;
+        });
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -196,10 +237,13 @@ export default function ChatPage() {
               {m.role === "user" ? "Vos" : "BCRA Chat"}
             </span>
             <p style={styles.bubbleText}>{m.content}</p>
+            {m.chart && m.chart.length > 1 && (
+              <SeriesChart points={m.chart} dark={darkMode} />
+            )}
           </div>
         ))}
 
-        {loading && (
+        {loading && messages[messages.length - 1]?.role !== "assistant" && (
           <div style={{ ...styles.bubble, ...styles.assistantBubble }}>
             <span style={styles.roleLabel}>BCRA Chat</span>
             <p style={{ ...styles.bubbleText, opacity: 0.5 }}>Consultando...</p>
@@ -234,6 +278,116 @@ export default function ChatPage() {
           Gino Luciano Rojo
         </a>
       </footer>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gráfico de línea para series temporales (SVG inline, sin librerías)
+// ---------------------------------------------------------------------------
+
+const CHART_W = 560;
+const CHART_H = 160;
+const CHART_PAD = { top: 12, right: 12, bottom: 20, left: 48 };
+
+function formatValor(v: number): string {
+  return v.toLocaleString("es-AR", { maximumFractionDigits: 2 });
+}
+
+function SeriesChart({ points, dark }: { points: [string, number][]; dark: boolean }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const colors = dark
+    ? { series: "#3987e5", surface: "#1a1a19", grid: "#2c2c2a", textPrimary: "#ffffff", textMuted: "#898781" }
+    : { series: "#2a78d6", surface: "#fcfcfb", grid: "#e1e0d9", textPrimary: "#0b0b0b", textMuted: "#898781" };
+
+  const plotW = CHART_W - CHART_PAD.left - CHART_PAD.right;
+  const plotH = CHART_H - CHART_PAD.top - CHART_PAD.bottom;
+
+  const values = points.map((p) => p[1]);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  const x = (i: number) =>
+    CHART_PAD.left + (points.length > 1 ? (i / (points.length - 1)) * plotW : plotW / 2);
+  const y = (v: number) => CHART_PAD.top + (1 - (v - min) / range) * plotH;
+
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+  const last = points[points.length - 1];
+
+  function handleMove(e: React.MouseEvent<SVGRectElement>) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const relX = ((e.clientX - rect.left) / rect.width) * CHART_W;
+    const ratio = points.length > 1 ? (relX - CHART_PAD.left) / plotW : 0;
+    const idx = Math.max(0, Math.min(points.length - 1, Math.round(ratio * (points.length - 1))));
+    setHoverIdx(idx);
+  }
+
+  const hovered = hoverIdx !== null ? points[hoverIdx] : null;
+  const tooltipX = hoverIdx !== null ? Math.min(Math.max(x(hoverIdx), CHART_PAD.left + 40), CHART_W - 46) : 0;
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+        width="100%"
+        height={CHART_H}
+        role="img"
+        aria-label="Gráfico de evolución de la serie"
+      >
+        <line
+          x1={CHART_PAD.left} y1={CHART_PAD.top + plotH}
+          x2={CHART_W - CHART_PAD.right} y2={CHART_PAD.top + plotH}
+          stroke={colors.grid} strokeWidth={1}
+        />
+        <text x={CHART_PAD.left - 6} y={CHART_PAD.top + 4} textAnchor="end" fontSize={10} fill={colors.textMuted}>
+          {formatValor(max)}
+        </text>
+        <text x={CHART_PAD.left - 6} y={CHART_PAD.top + plotH} textAnchor="end" fontSize={10} fill={colors.textMuted}>
+          {formatValor(min)}
+        </text>
+        <text x={CHART_PAD.left} y={CHART_H - 4} fontSize={10} fill={colors.textMuted}>
+          {points[0][0]}
+        </text>
+        <text x={CHART_W - CHART_PAD.right} y={CHART_H - 4} textAnchor="end" fontSize={10} fill={colors.textMuted}>
+          {last[0]}
+        </text>
+
+        <path d={path} fill="none" stroke={colors.series} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={x(points.length - 1)} cy={y(last[1])} r={5} fill={colors.series} stroke={colors.surface} strokeWidth={2} />
+        <text x={x(points.length - 1) - 8} y={y(last[1]) - 8} textAnchor="end" fontSize={11} fontWeight={700} fill={colors.textPrimary}>
+          {formatValor(last[1])}
+        </text>
+
+        {hovered && hoverIdx !== null && (
+          <>
+            <line
+              x1={x(hoverIdx)} y1={CHART_PAD.top} x2={x(hoverIdx)} y2={CHART_PAD.top + plotH}
+              stroke={colors.textMuted} strokeWidth={1} strokeDasharray="2,2"
+            />
+            <circle cx={x(hoverIdx)} cy={y(hovered[1])} r={4} fill={colors.series} stroke={colors.surface} strokeWidth={2} />
+            <g transform={`translate(${tooltipX - 40}, ${CHART_PAD.top})`}>
+              <rect width={80} height={28} rx={4} fill={colors.surface} stroke={colors.grid} strokeWidth={1} />
+              <text x={40} y={11} textAnchor="middle" fontSize={9} fill={colors.textMuted}>{hovered[0]}</text>
+              <text x={40} y={22} textAnchor="middle" fontSize={10} fontWeight={700} fill={colors.textPrimary}>
+                {formatValor(hovered[1])}
+              </text>
+            </g>
+          </>
+        )}
+
+        <rect
+          x={CHART_PAD.left} y={0} width={plotW} height={CHART_H}
+          fill="transparent"
+          onMouseMove={handleMove}
+          onMouseLeave={() => setHoverIdx(null)}
+        />
+      </svg>
     </div>
   );
 }

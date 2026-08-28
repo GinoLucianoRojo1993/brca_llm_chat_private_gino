@@ -13,6 +13,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import * as bcra from "../lib/bcra-client.js";
+import * as rns from "../lib/rns-client.js";
 import { compact } from "../lib/compact.js";
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,25 @@ const ChequeDenunciadoSchema = z.object({
 
 const IdentificacionSchema = z.object({
   identificacion: z.string().regex(/^\d{11}$/, "CUIT de 11 dígitos sin guiones"),
+});
+
+const VariablesBuscarSchema = z.object({
+  texto: z.string().min(1).max(200),
+});
+
+const SociedadBuscarSchema = z.object({
+  nombre: z.string().min(1).max(200),
+  limit: z.number().int().positive().max(50).optional(),
+});
+
+const SociedadCuitSchema = z.object({
+  cuit: z.string().regex(/^\d{11}$/, "CUIT de 11 dígitos sin guiones"),
+});
+
+const SociedadListarSchema = z.object({
+  tipo: z.string().max(50).optional(),
+  provincia: z.string().max(100).optional(),
+  limit: z.number().int().positive().max(50).optional(),
 });
 
 const TRANSPARENCIA_PRODUCTOS = [
@@ -232,6 +252,53 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "bcra_variables_buscar",
+      description: "Busca variables monetarias del BCRA por texto libre en su descripción. Cubre categorías nuevas de Estadísticas Monetarias v4.0 (agregados monetarios M1/M2/M3, préstamos y depósitos por tipo de titular, sector público por jurisdicción) sin depender de valores exactos de categoría.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          texto: { type: "string", description: "Texto a buscar (ej: 'M2', 'PyMEs', 'sector público')" },
+        },
+        required: ["texto"],
+      },
+    },
+    {
+      name: "bcra_sociedad_buscar",
+      description: "Busca sociedades por nombre (texto libre) en el Registro Nacional de Sociedades.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          nombre: { type: "string", description: "Nombre o parte de la razón social a buscar" },
+          limit: { type: "number", description: "Máximo de resultados (default: 10)" },
+        },
+        required: ["nombre"],
+      },
+    },
+    {
+      name: "bcra_sociedad_por_cuit",
+      description: "Busca una sociedad exacta por CUIT en el Registro Nacional de Sociedades.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          cuit: { type: "string", description: "CUIT de 11 dígitos sin guiones" },
+        },
+        required: ["cuit"],
+      },
+    },
+    {
+      name: "bcra_sociedad_listar",
+      description: "Lista sociedades del Registro Nacional de Sociedades filtradas por tipo societario y/o provincia.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          tipo: { type: "string", description: "Tipo societario (ej: SA, SRL)" },
+          provincia: { type: "string", description: "Provincia del domicilio fiscal" },
+          limit: { type: "number", description: "Máximo de resultados (default: 10)" },
+        },
+        required: [],
+      },
+    },
+    {
       name: "bcra_transparencia_consultar",
       description: "Consulta información de productos financieros de una entidad en el Régimen de Transparencia.",
       inputSchema: {
@@ -336,6 +403,30 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         const data = await bcra.obtenerChequesRechazados(identificacion);
         const masked = { ...data, identificacion: bcra.maskId(identificacion) };
         return ok(masked);
+      }
+
+      case "bcra_variables_buscar": {
+        const { texto } = VariablesBuscarSchema.parse(args);
+        const data = await bcra.buscarVariablesPorTexto(texto);
+        return ok(data);
+      }
+
+      case "bcra_sociedad_buscar": {
+        const { nombre, limit } = SociedadBuscarSchema.parse(args);
+        const data = await rns.buscarSociedadPorNombre(nombre, limit);
+        return ok(data);
+      }
+
+      case "bcra_sociedad_por_cuit": {
+        const { cuit } = SociedadCuitSchema.parse(args);
+        const data = await rns.buscarSociedadPorCuit(cuit);
+        return ok(data ?? { mensaje: "No se encontró ninguna sociedad con ese CUIT." });
+      }
+
+      case "bcra_sociedad_listar": {
+        const { tipo, provincia, limit } = SociedadListarSchema.parse(args);
+        const data = await rns.listarSociedades({ tipo, provincia, limit });
+        return ok(data);
       }
 
       case "bcra_transparencia_consultar": {
